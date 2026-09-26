@@ -33,7 +33,7 @@ docker compose down -v --remove-orphans
 
 | 业务模块 | 后端实体 | API 前缀 | 状态流 |
 |---|---|---|---|
-| 航空部件 | `AircraftPart` | `/api/parts` | received, inspection, hold, released, retired |
+| 航空部件 | `AircraftPart` + `InstallRecord` | `/api/parts` | received, inspection, hold, released, installed, retired |
 | 检查任务 | `InspectionTask` | `/api/inspections` | planned, running, passed, failed |
 | 证书记录 | `CertificateRecord` | `/api/certificates` | draft, valid, expired, revoked |
 | 放行授权 | `ReleaseAuthorization` | `/api/authorizations` | draft, review, approved, restricted, revoked |
@@ -43,6 +43,7 @@ docker compose down -v --remove-orphans
 - 证书发布同样要求 reviewer/admin，且发布者不能是当前版本的编制人。
 - 证书和授权的每次创建、草稿更新与状态变化都在同一事务写入不可变版本快照和审计日志。
 - 所有状态变化使用乐观锁；复核开始后业务字段锁定，防止覆盖已审证据。
+- 部件装机履历：已放行部件通过专用装机接口登记机型、架次（机号）、安装位置和装机人，状态推进到 `installed`；同一部件已有在装记录、或同一架次同一安装位置已被别的部件占用时请求被拒，响应返回挡住本次操作的履历记录（`install_part_active` / `install_slot_occupied`，409）。在装部件不能通过通用迁移离开该状态，卸载必须填写原因，卸载后部件回到 `inspection`，履历记录关闭但永久保留在部件详情；装机与卸载同事务写审计。
 - 请求 ID、结构化日志、全局错误映射和 Redis 分布式限流。
 - 提供脱敏运行配置、当前会话、审计汇总和单实体审计历史接口。
 - 业务工作台支持查询、新建、状态推进、风险标识及操作审计查看。
@@ -131,7 +132,7 @@ docker compose config --quiet
 
 | 枚举 | 值 | 前后端出现位置 |
 |---|---|---|
-| `PartState` | `received, inspection, hold, released, retired` | `backend/internal/constants/status.go`、`frontend/src/types/status.ts` |
+| `PartState` | `received, inspection, hold, released, installed, retired` | `backend/internal/constants/status.go`、`frontend/src/types/status.ts` |
 | `AuthorizationState` | `draft, review, approved, restricted, revoked` | `backend/internal/constants/status.go`、`frontend/src/types/status.ts` |
 
 每个实体自己的完整迁移图同样位于 `backend/internal/constants/status.go`；页面使用的状态列表位于 `frontend/src/types/status.ts`。修改状态时必须同步两处并更新对应服务测试。

@@ -1,6 +1,6 @@
 
 import { request } from './client';
-import type { DomainRecord } from '../types/domain';
+import type { DomainRecord, InstallInput, UninstallInput } from '../types/domain';
 
 export async function listAircraftPart(page = 1, pageSize = 20, search = '') {
   return request<DomainRecord[]>(`/parts?page=${page}&pageSize=${pageSize}&search=${encodeURIComponent(search)}`);
@@ -12,4 +12,10 @@ export async function transitionAircraftPart(id: number, status: string, expecte
   return request<DomainRecord>(`/parts/${id}/transition`, {
     method: 'POST', body: JSON.stringify({ status, expectedVersion, reason }),
   });
+}
+export async function installAircraftPart(id: number, input: InstallInput) {
+  return request<DomainRecord>(`/parts/${id}/install`, { method: 'POST', body: JSON.stringify(input) });
+}
+export async function uninstallAircraftPart(id: number, input: UninstallInput) {
+  return request<DomainRecord>(`/parts/${id}/uninstall`, { method: 'POST', body: JSON.stringify(input) });
 }

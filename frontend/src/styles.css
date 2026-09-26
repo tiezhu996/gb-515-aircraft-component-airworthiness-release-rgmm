@@ -37,6 +37,25 @@ td small { display: block; color: #7d8d97; margin-top: 4px; }
 .part-status { gap: 6px; text-transform: none; white-space: nowrap; }
 .part-status__signal { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: 0 0 7px; }
 .table-action, .link-button { border: 0; background: none; color: #167c66; cursor: pointer; font-weight: 650; padding: 5px; }
+.table-action--danger { color: #b23a48; }
+.part-actions { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.install-history-row td { background: #f7fafb; padding: 14px 18px; }
+.install-history { display: grid; gap: 10px; }
+.install-history__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.install-timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.install-row { border: 1px solid #dbe4e8; border-left: 3px solid #9fb2bf; background: white; padding: 11px 13px; display: grid; gap: 6px; }
+.install-row--active { border-left-color: #2a9d78; }
+.install-row__title { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; }
+.install-row__slot { color: #4f6370; font-size: 13px; }
+.install-row__meta { display: flex; flex-wrap: wrap; gap: 14px; color: #6c7e8a; font-size: 12px; }
+.install-row__meta code, .install-row__reason code { color: #4a6474; font-size: 11px; }
+.install-row__state { font-weight: 700; color: #176c55; }
+.install-row__state--closed { color: #82919a; font-weight: 600; }
+.install-row__reason { font-size: 13px; color: #506572; }
+.install-form { display: grid; gap: 13px; }
+.install-form label { display: grid; gap: 6px; font-size: 13px; color: #4f6370; font-weight: 600; }
+.install-form input, .install-form textarea { border: 1px solid #bdcbd3; padding: 9px 11px; font-weight: 400; width: 100%; resize: vertical; }
+.install-form footer { margin-top: 4px; }
 .access-note { display: inline-flex; align-items: center; min-height: 36px; color: #667886; border: 1px solid #bdcbd3; padding: 7px 11px; font-size: 13px; }
 .muted, .empty { color: #82919a; }.empty { text-align: center; padding: 40px; }
 .loading { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(255,255,255,.72); color: #176c55; font-weight: 700; }

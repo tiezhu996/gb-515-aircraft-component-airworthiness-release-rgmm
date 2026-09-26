@@ -8,6 +8,7 @@ import (
 
 	"github.com/blueship581/aircraft-component-airworthiness-release/backend/internal/config"
 	"github.com/blueship581/aircraft-component-airworthiness-release/backend/internal/model"
+	"github.com/blueship581/aircraft-component-airworthiness-release/backend/internal/repository"
 	"github.com/glebarez/sqlite"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
@@ -78,6 +79,7 @@ func migrate(db *gorm.DB) error {
 	return db.AutoMigrate(
 		&model.User{}, &model.AuditLog{},
 		&model.AircraftPart{},
+		&model.InstallRecord{},
 		&model.InspectionTask{},
 		&model.CertificateRecord{},
 		&model.CertificateRecordRevision{},
@@ -148,8 +150,31 @@ func seedAircraftPart(ctx context.Context, db *gorm.DB) error {
 			Description: "用于启动验证和主要流程演示的航空部件记录"}, Facility: "航空部件适航放行区域3", Owner: "安全主管组",
 			Category: "复核", RiskLevel: "high", MetricValue: 37.5, MetricUnit: "score",
 			EffectiveAt: now.Add(6 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-515-03"},
+
+		{BaseModel: model.BaseModel{Code: "AP-004", Name: "航空部件示例四", Status: "released", Version: 3,
+			Description: "已放行待装机的演示部件"}, Facility: "航空部件适航放行区域4", Owner: "航线车间",
+			Category: "航线件", RiskLevel: "medium", MetricValue: 50.0, MetricUnit: "%",
+			EffectiveAt: now.Add(9 * time.Hour), Evidence: "检查通过并完成适航放行", RelatedCode: "REL-515-04"},
+
+		{BaseModel: model.BaseModel{Code: "AP-005", Name: "航空部件示例五", Status: "installed", Version: 4,
+			Description: "已装机的演示部件，可展开查看装机履历"}, Facility: "航空部件适航放行区域4", Owner: "航线车间",
+			Category: "航线件", RiskLevel: "high", MetricValue: 62.5, MetricUnit: "%",
+			EffectiveAt: now.Add(12 * time.Hour), Evidence: "装机前证据齐全", RelatedCode: "REL-515-05"},
 	}
-	return db.WithContext(ctx).Create(&items).Error
+	if err := db.WithContext(ctx).Create(&items).Error; err != nil {
+		return err
+	}
+	var installedPart model.AircraftPart
+	if err := db.WithContext(ctx).Where("code = ?", "AP-005").First(&installedPart).Error; err != nil {
+		return err
+	}
+	installed := model.InstallRecord{
+		AircraftPartID: installedPart.ID, AircraftModel: "C919", AircraftSerial: "B-515",
+		Location: "左翼-1号挂点", InstalledBy: "system-seed", InstalledAt: now.Add(12 * time.Hour),
+		InstallRequest: "seed-gb-515", CreatedAt: now, UpdatedAt: now,
+		SlotKey: repository.InstallSlotKey("B-515", "左翼-1号挂点"),
+	}
+	return db.WithContext(ctx).Create(&installed).Error
 }
 
 func seedInspectionTask(ctx context.Context, db *gorm.DB) error {

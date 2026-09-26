@@ -23,6 +23,8 @@ func (h *AircraftPartHandler) Register(group *gin.RouterGroup) {
 	resource.POST("", middleware.RequireMinimumRole("operator"), h.create)
 	resource.PUT("/:id", middleware.RequireMinimumRole("operator"), h.update)
 	resource.POST("/:id/transition", middleware.RequireMinimumRole("operator"), h.transition)
+	resource.POST("/:id/install", middleware.RequireMinimumRole("operator"), h.install)
+	resource.POST("/:id/uninstall", middleware.RequireMinimumRole("operator"), h.uninstall)
 	resource.DELETE("/:id", middleware.RequireRoles("admin"), h.remove)
 }
 
@@ -109,4 +111,40 @@ func (h *AircraftPartHandler) remove(c *gin.Context) {
 		return
 	}
 	util.NoContent(c)
+}
+
+func (h *AircraftPartHandler) install(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var input dto.InstallAircraftPart
+	if err := c.ShouldBindJSON(&input); err != nil {
+		util.Fail(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	item, err := h.service.Install(c.Request.Context(), id, input, actorFromContext(c), requestIDFromContext(c))
+	if err != nil {
+		handleInstallError(c, err)
+		return
+	}
+	util.OK(c, item)
+}
+
+func (h *AircraftPartHandler) uninstall(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var input dto.UninstallAircraftPart
+	if err := c.ShouldBindJSON(&input); err != nil {
+		util.Fail(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	item, err := h.service.Uninstall(c.Request.Context(), id, input, actorFromContext(c), requestIDFromContext(c))
+	if err != nil {
+		handleInstallError(c, err)
+		return
+	}
+	util.OK(c, item)
 }

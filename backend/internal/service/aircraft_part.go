@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -18,6 +19,8 @@ type AircraftPartService interface {
 	Create(context.Context, dto.CreateAircraftPart, string, string) (model.AircraftPart, error)
 	Update(context.Context, uint, dto.UpdateAircraftPart, string, string) (model.AircraftPart, error)
 	Transition(context.Context, uint, dto.TransitionRequest, string, string) (model.AircraftPart, error)
+	Install(context.Context, uint, dto.InstallAircraftPart, string, string) (model.AircraftPart, error)
+	Uninstall(context.Context, uint, dto.UninstallAircraftPart, string, string) (model.AircraftPart, error)
 	Delete(context.Context, uint, string, string) error
 	StatusCounts(context.Context) (map[string]int64, error)
 }
@@ -95,6 +98,11 @@ func (s *aircraftPartService) Transition(ctx context.Context, id uint, input dto
 		return model.AircraftPart{}, err
 	}
 	target := strings.TrimSpace(input.Status)
+	if target == string(constants.PartStateInstalled) {
+		// 装机 must register 机型/架次/安装位置/装机人, so it is only accepted
+		// through the dedicated install endpoint.
+		return model.AircraftPart{}, fmt.Errorf("%w: %s -> %s requires the install endpoint", ErrInvalidTransition, current.Status, target)
+	}
 	if !constants.CanTransition(constants.AircraftPartTransitions, current.Status, target) {
 		return model.AircraftPart{}, fmt.Errorf("%w: %s -> %s", ErrInvalidTransition, current.Status, target)
 	}
@@ -107,6 +115,56 @@ func (s *aircraftPartService) Transition(ctx context.Context, id uint, input dto
 	}
 	if err := s.security.Audit(ctx, actor, requestID, "transition", "AircraftPart", id, before, target, input.Reason); err != nil {
 		return model.AircraftPart{}, fmt.Errorf("persist transition audit: %w", err)
+	}
+	return s.repository.Get(ctx, id)
+}
+
+func (s *aircraftPartService) Install(ctx context.Context, id uint, input dto.InstallAircraftPart, actor, requestID string) (model.AircraftPart, error) {
+	current, err := s.repository.Get(ctx, id)
+	if err != nil {
+		return model.AircraftPart{}, err
+	}
+	aircraftModel := strings.TrimSpace(input.AircraftModel)
+	aircraftSerial := strings.TrimSpace(input.AircraftSerial)
+	location := strings.TrimSpace(input.Location)
+	installedBy := strings.TrimSpace(input.InstalledBy)
+	if installedBy == "" {
+		installedBy = actor
+	}
+	if aircraftModel == "" || aircraftSerial == "" || location == "" || installedBy == "" {
+		return model.AircraftPart{}, ErrInvalidInput
+	}
+	record := model.InstallRecord{
+		AircraftModel:  aircraftModel,
+		AircraftSerial: aircraftSerial,
+		Location:       location,
+		InstalledBy:    installedBy,
+		SlotKey:        repository.InstallSlotKey(aircraftSerial, location),
+	}
+	if _, err := s.repository.Install(ctx, &current, input.ExpectedVersion, &record, actor, requestID); err != nil {
+		if errors.Is(err, repository.ErrPartNotReleased) {
+			return model.AircraftPart{}, fmt.Errorf("%w: only released parts can be installed", ErrInvalidTransition)
+		}
+		return model.AircraftPart{}, fmt.Errorf("install 航空部件: %w", err)
+	}
+	return s.repository.Get(ctx, id)
+}
+
+func (s *aircraftPartService) Uninstall(ctx context.Context, id uint, input dto.UninstallAircraftPart, actor, requestID string) (model.AircraftPart, error) {
+	current, err := s.repository.Get(ctx, id)
+	if err != nil {
+		return model.AircraftPart{}, err
+	}
+	reason := strings.TrimSpace(input.Reason)
+	if reason == "" {
+		return model.AircraftPart{}, ErrInvalidInput
+	}
+	if current.Status != string(constants.PartStateInstalled) {
+		return model.AircraftPart{}, fmt.Errorf("%w: %s -> %s requires installed part", ErrInvalidTransition, current.Status, constants.PartStateInspection)
+	}
+	var record model.InstallRecord
+	if _, err := s.repository.Uninstall(ctx, &current, input.ExpectedVersion, &record, actor, requestID, reason); err != nil {
+		return model.AircraftPart{}, fmt.Errorf("uninstall 航空部件: %w", err)
 	}
 	return s.repository.Get(ctx, id)
 }

@@ -97,8 +97,86 @@ printf '%s' "$certificate_valid" | jq -e '.data.status == "valid" and .data.vers
 curl -fsS "http://127.0.0.1:${BACKEND_PORT}/api/audits/ReleaseAuthorization/${authorization_id}?limit=10" \
   -H "Authorization: Bearer $admin_token" \
   | jq -e '[.data[].requestId] | index("gb515-auth-create") != null and index("gb515-auth-review") != null and index("gb515-auth-approve") != null' >/dev/null
+
+# 部件装机履历：放行 -> 装机 -> 拦截重复装机/重复占位 -> 卸载回检查中
+install_part_payload=$(printf '{"code":"INST-SMOKE-%s","name":"装机履历验证部件","description":"Install history validation","facility":"Validation Hangar","owner":"Line Station","category":"engine","riskLevel":"high","metricValue":100,"metricUnit":"percent","effectiveAt":"%s","evidence":"release and install evidence","relatedCode":"PART-SMOKE"}' "$suffix" "$now")
+install_part=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb515-install-part-create' \
+  -d "$install_part_payload")
+install_part_id=$(printf '%s' "$install_part" | jq -er '.data.id')
+curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${install_part_id}/transition" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' \
+  -d '{"status":"inspection","expectedVersion":1,"reason":"move to inspection for install validation"}' >/dev/null
+install_part_released=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${install_part_id}/transition" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' \
+  -d '{"status":"released","expectedVersion":2,"reason":"inspection passed, ready for installation"}')
+install_part_version=$(printf '%s' "$install_part_released" | jq -er '.data.version')
+
+# 未放行部件不允许走通用迁移直接到 installed
+generic_install_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${install_part_id}/transition" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' \
+  -d "{\"status\":\"installed\",\"expectedVersion\":${install_part_version},\"reason\":\"generic transition must be rejected\"}")
+[ "$generic_install_status" = "422" ]
+
+installed_part=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${install_part_id}/install" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb515-install' \
+  -d '{"expectedVersion":3,"aircraftModel":"C919","aircraftSerial":"B-SMOKE-1","location":"左翼-1号挂点","installedBy":"operator"}')
+printf '%s' "$installed_part" | jq -e '.data.status == "installed" and .data.version == 4 and (.data.installRecords | length) == 1 and .data.installRecords[0].aircraftModel == "C919" and .data.installRecords[0].aircraftSerial == "B-SMOKE-1" and .data.installRecords[0].location == "左翼-1号挂点" and .data.installRecords[0].installedBy == "operator"' >/dev/null
+
+# 在装部件不允许再走通用迁移离开 installed
+bypass_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${install_part_id}/transition" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' \
+  -d '{"status":"inspection","expectedVersion":4,"reason":"must uninstall before leaving installed"}')
+[ "$bypass_status" = "422" ]
+
+# 同一部件重复装机被拒，并返回挡住它的履历记录
+duplicate_part_status=$(curl -sS -o /tmp/install-duplicate-part.json -w '%{http_code}' -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${install_part_id}/install" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' \
+  -d '{"expectedVersion":4,"aircraftModel":"C919","aircraftSerial":"B-SMOKE-2","location":"右翼-2号挂点","installedBy":"operator"}')
+[ "$duplicate_part_status" = "409" ]
+jq -e '.error == "install_part_active" and .details.blocker.partCode == ("INST-SMOKE-" + env.suffix) and .details.blocker.aircraftSerial == "B-SMOKE-1" and .details.blocker.location == "左翼-1号挂点"' /tmp/install-duplicate-part.json >/dev/null
+
+# 第二件部件放行后抢占同一架次同一安装位置被拒
+occupier_payload=$(printf '{"code":"INST-SMOKE-OCC-%s","name":"装机占位验证部件","description":"Slot occupier","facility":"Validation Hangar","owner":"Line Station","category":"engine","riskLevel":"medium","metricValue":100,"metricUnit":"percent","effectiveAt":"%s","evidence":"release evidence","relatedCode":"PART-SMOKE"}' "$suffix" "$now")
+occupier_id=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' \
+  -d "$occupier_payload" | jq -er '.data.id')
+curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${occupier_id}/transition" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' \
+  -d '{"status":"inspection","expectedVersion":1,"reason":"to inspection"}' >/dev/null
+curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${occupier_id}/transition" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' \
+  -d '{"status":"released","expectedVersion":2,"reason":"to released"}' >/dev/null
+slot_status=$(curl -sS -o /tmp/install-slot.json -w '%{http_code}' -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${occupier_id}/install" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' \
+  -d '{"expectedVersion":3,"aircraftModel":"C919","aircraftSerial":"B-SMOKE-1","location":"左翼-1号挂点","installedBy":"operator"}')
+[ "$slot_status" = "409" ]
+jq -e --arg part "INST-SMOKE-$suffix" '.error == "install_slot_occupied" and .details.blocker.partCode == $part and .details.blocker.recordId == 1' /tmp/install-slot.json >/dev/null
+
+# 卸载必须写原因，缺原因 400
+uninstall_no_reason_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${install_part_id}/uninstall" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' \
+  -d '{"expectedVersion":4}')
+[ "$uninstall_no_reason_status" = "400" ]
+
+# 卸载：部件回检查中，履历记录关闭但保留
+uninstalled_part=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${install_part_id}/uninstall" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb515-uninstall' \
+  -d '{"expectedVersion":4,"reason":"定检到期拆下"}')
+printf '%s' "$uninstalled_part" | jq -e '.data.status == "inspection" and .data.version == 5 and (.data.installRecords | length) == 1 and .data.installRecords[0].removedAt != null and .data.installRecords[0].removedBy == "operator" and .data.installRecords[0].removeReason == "定检到期拆下" and .data.installRecords[0].removeRequestId == "gb515-uninstall"' >/dev/null
+
+# 卸载后同一架次位置可被第二件部件占用
+slot_freed=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${occupier_id}/install" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb515-install-slot-freed' \
+  -d '{"expectedVersion":3,"aircraftModel":"C919","aircraftSerial":"B-SMOKE-1","location":"左翼-1号挂点","installedBy":"reviewer"}')
+printf '%s' "$slot_freed" | jq -e '.data.status == "installed" and .data.installRecords[0].installedBy == "reviewer"' >/dev/null
+
+# 装机与卸载都进审计
+curl -fsS "http://127.0.0.1:${BACKEND_PORT}/api/audits/AircraftPart/${install_part_id}?limit=20" \
+  -H "Authorization: Bearer $admin_token" \
+  | jq -e '[.data[] | select(.action == "install" or .action == "uninstall")] | length == 2 and (map(.requestId) | index("gb515-install") != null) and (map(.requestId) | index("gb515-uninstall") != null)' >/dev/null
 curl -fsS "http://127.0.0.1:${BACKEND_PORT}/api/audit-summary?windowHours=24" -H "Authorization: Bearer $admin_token" \
-  | jq -e '.data.total >= 5 and .data.transitions >= 3 and .data.uniqueActors >= 2' >/dev/null
+  | jq -e '(.data.actions | map(select(.action == "install")) | .[0].count // 0) >= 2 and (.data.actions | map(select(.action == "uninstall")) | .[0].count // 0) >= 1' >/dev/null
 
 docker compose ps
 [ "${KEEP_RUNNING:-0}" = "1" ] && echo "KEEP_RUNNING=1: containers left running for built-in Browser validation"
