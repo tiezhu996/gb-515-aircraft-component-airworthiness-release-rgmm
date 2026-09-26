@@ -1,5 +1,29 @@
 # 验证记录
 
+## 2026-09-26 装机履历（本次变更）
+
+以下命令均实际执行成功：
+
+```bash
+cd backend
+gofmt -l .            # 无输出
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./...
+
+cd ../frontend
+npm run typecheck
+npm run build
+```
+
+- 非测试 Go 代码：3578 行、39 个 `.go` 文件。
+- 新增服务层测试 `TestAircraftPartInstallationLifecycle` / `TestAircraftPartUninstallRequiresActiveRecord` 与状态图测试 `TestAircraftPartInstalledStateIsEndpointDriven`，覆盖：仅 released 可装机、重复装机与位置占用按记录拒绝、installed 禁止通用迁移、卸载必填原因并回到 inspection、履历永久保留、重新放行后可再次装机、install/uninstall/transition 均落审计。
+- 使用 SQLite 开发模式启动真实后端（端口 17515）完成接口冒烟：种子 AP-005 详情返回在装履历；AP-004 装机到被占用的 `B-5150/左发吊舱` 返回 409 且报文点名 `装机记录 #1 / AP-005`；空闲位置装机成功进入 `installed`；同件重复装机返回 409 且点名 `在装记录 #2`；`installed` 部件通用迁移到 inspection/hold 返回 422；空原因卸载返回 400；带原因卸载回到 `inspection` 且履历保留 `removalReason`；`GET /parts/:id/installations` 对 viewer 可读；viewer 装机返回 403；新部件走完整链路后成功占用已释放位置；审计历史含 `smoke-install-1`/`smoke-uninstall-1`。
+- `scripts/validate.sh` 已追加装机履历全链路断言（409 阻挡报文、安装、重复拦截、迁移拦截、卸载、履历保留、审计请求 ID）。本环境无 docker CLI，Compose 空卷回归未在本次执行，需在具备 Docker 的环境运行 `./scripts/validate.sh` 复核。
+
+## 2026-08-22 基线
+
 验证日期：2026-08-22（Asia/Shanghai）
 
 ## 代码质量

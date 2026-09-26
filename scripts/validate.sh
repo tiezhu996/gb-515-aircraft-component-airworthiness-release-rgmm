@@ -94,6 +94,49 @@ certificate_valid=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/cert
   -d "{\"status\":\"valid\",\"expectedVersion\":${certificate_version},\"reason\":\"independent certificate evidence review passed\"}")
 printf '%s' "$certificate_valid" | jq -e '.data.status == "valid" and .data.version == 2 and .data.preparedBy == "operator" and .data.verifiedBy == "reviewer" and (.data.revisions | length) == 2 and .data.revisions[1].requestId == "gb515-cert-publish"' >/dev/null
 
+part_released=$(curl -fsS "http://127.0.0.1:${BACKEND_PORT}/api/parts?search=AP-004" -H "Authorization: Bearer $operator_token")
+part_released_id=$(printf '%s' "$part_released" | jq -er '.data[0].id')
+part_released_version=$(printf '%s' "$part_released" | jq -er '.data[0].version')
+
+slot_conflict_status=$(curl -sS -o /tmp/gb515-install-slot-conflict.json -w '%{http_code}' -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${part_released_id}/install" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb515-install-slot-conflict' \
+  -d "{\"aircraftModel\":\"ARJ21-700\",\"aircraftTail\":\"B-5150\",\"position\":\"左发吊舱\",\"installer\":\"张工\",\"expectedVersion\":${part_released_version}}")
+[ "$slot_conflict_status" = "409" ]
+jq -e '.error == "installation_conflict" and (.message | contains("AP-005")) and (.message | contains("记录 #"))' /tmp/gb515-install-slot-conflict.json >/dev/null
+
+installed=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${part_released_id}/install" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb515-install' \
+  -d "{\"aircraftModel\":\"ARJ21-700\",\"aircraftTail\":\"B-5151\",\"position\":\"右发吊舱\",\"installer\":\"张工\",\"expectedVersion\":${part_released_version}}")
+printf '%s' "$installed" | jq -e '.data.status == "installed" and (.data.installations | length) == 1 and .data.installations[0].active == true and .data.installations[0].aircraftTail == "B-5151" and .data.installations[0].installer == "张工"' >/dev/null
+installed_version=$(printf '%s' "$installed" | jq -er '.data.version')
+
+duplicate_status=$(curl -sS -o /tmp/gb515-install-duplicate.json -w '%{http_code}' -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${part_released_id}/install" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb515-install-duplicate' \
+  -d "{\"aircraftModel\":\"ARJ21-700\",\"aircraftTail\":\"B-5152\",\"position\":\"中央油箱\",\"installer\":\"李工\",\"expectedVersion\":${installed_version}}")
+[ "$duplicate_status" = "409" ]
+jq -e '.error == "installation_conflict" and (.message | contains("在装记录 #"))' /tmp/gb515-install-duplicate.json >/dev/null
+
+installed_transition_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${part_released_id}/transition" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb515-installed-transition-denied' \
+  -d "{\"status\":\"inspection\",\"expectedVersion\":${installed_version},\"reason\":\"installed parts must be uninstalled first\"}")
+[ "$installed_transition_status" = "422" ]
+
+uninstall_no_reason_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${part_released_id}/uninstall" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' \
+  -d "{\"expectedVersion\":${installed_version},\"reason\":\"\"}")
+[ "$uninstall_no_reason_status" = "400" ]
+
+uninstalled=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${part_released_id}/uninstall" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb515-uninstall' \
+  -d "{\"expectedVersion\":${installed_version},\"reason\":\"定检到期拆下复查\"}")
+printf '%s' "$uninstalled" | jq -e '.data.status == "inspection" and (.data.installations | length) == 1 and .data.installations[0].active == false and .data.installations[0].removalReason == "定检到期拆下复查" and (.data.installations[0].removedAt != null)' >/dev/null
+
+curl -fsS "http://127.0.0.1:${BACKEND_PORT}/api/parts/${part_released_id}/installations" -H "Authorization: Bearer $viewer_token" \
+  | jq -e '(.data | length) == 1 and .data[0].active == false' >/dev/null
+curl -fsS "http://127.0.0.1:${BACKEND_PORT}/api/audits/AircraftPart/${part_released_id}?limit=20" \
+  -H "Authorization: Bearer $admin_token" \
+  | jq -e '[.data[].requestId] | index("gb515-install") != null and index("gb515-uninstall") != null' >/dev/null
+
 curl -fsS "http://127.0.0.1:${BACKEND_PORT}/api/audits/ReleaseAuthorization/${authorization_id}?limit=10" \
   -H "Authorization: Bearer $admin_token" \
   | jq -e '[.data[].requestId] | index("gb515-auth-create") != null and index("gb515-auth-review") != null and index("gb515-auth-approve") != null' >/dev/null

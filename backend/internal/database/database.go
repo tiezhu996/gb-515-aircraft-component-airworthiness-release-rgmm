@@ -78,6 +78,7 @@ func migrate(db *gorm.DB) error {
 	return db.AutoMigrate(
 		&model.User{}, &model.AuditLog{},
 		&model.AircraftPart{},
+		&model.PartInstallation{},
 		&model.InspectionTask{},
 		&model.CertificateRecord{},
 		&model.CertificateRecordRevision{},
@@ -148,8 +149,40 @@ func seedAircraftPart(ctx context.Context, db *gorm.DB) error {
 			Description: "用于启动验证和主要流程演示的航空部件记录"}, Facility: "航空部件适航放行区域3", Owner: "安全主管组",
 			Category: "复核", RiskLevel: "high", MetricValue: 37.5, MetricUnit: "score",
 			EffectiveAt: now.Add(6 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-515-03"},
+
+		{BaseModel: model.BaseModel{Code: "AP-004", Name: "航空部件示例四", Status: "released", Version: 1,
+			Description: "已放行待装机的航空部件记录，用于演示装机履历登记"}, Facility: "航空部件适航放行区域1", Owner: "运行一组",
+			Category: "常规", RiskLevel: "medium", MetricValue: 50.0, MetricUnit: "unit",
+			EffectiveAt: now.Add(9 * time.Hour), Evidence: "放行证据齐全", RelatedCode: "REL-515-04"},
+
+		{BaseModel: model.BaseModel{Code: "AP-005", Name: "航空部件示例五", Status: "installed", Version: 1,
+			Description: "已装机部件记录，用于演示在装状态与卸载流程"}, Facility: "航空部件适航放行区域2", Owner: "质量复核组",
+			Category: "重点", RiskLevel: "high", MetricValue: 62.5, MetricUnit: "score",
+			EffectiveAt: now.Add(12 * time.Hour), Evidence: "装机前检查完成", RelatedCode: "REL-515-05"},
 	}
-	return db.WithContext(ctx).Create(&items).Error
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&items).Error; err != nil {
+			return err
+		}
+		var installed *model.AircraftPart
+		for index := range items {
+			if items[index].Status == "installed" {
+				installed = &items[index]
+				break
+			}
+		}
+		if installed == nil {
+			return nil
+		}
+		partKey := "PART:" + installed.Code
+		slotKey := "SLOT:B-5150|左发吊舱"
+		record := model.PartInstallation{
+			PartID: installed.ID, PartCode: installed.Code, AircraftModel: "ARJ21-700",
+			AircraftTail: "B-5150", Position: "左发吊舱", Installer: "张工", InstalledBy: "operator",
+			InstalledAt: now, Active: true, ActivePartKey: &partKey, ActiveSlotKey: &slotKey,
+		}
+		return tx.Create(&record).Error
+	})
 }
 
 func seedInspectionTask(ctx context.Context, db *gorm.DB) error {

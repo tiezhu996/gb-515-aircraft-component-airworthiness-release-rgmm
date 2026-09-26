@@ -33,7 +33,8 @@ docker compose down -v --remove-orphans
 
 | 业务模块 | 后端实体 | API 前缀 | 状态流 |
 |---|---|---|---|
-| 航空部件 | `AircraftPart` | `/api/parts` | received, inspection, hold, released, retired |
+| 航空部件 | `AircraftPart` | `/api/parts` | received, inspection, hold, released, installed, retired |
+| 装机履历 | `PartInstallation` | `/api/parts/:id/install(ations)` | active（在装）/ closed（已卸载，永久保留） |
 | 检查任务 | `InspectionTask` | `/api/inspections` | planned, running, passed, failed |
 | 证书记录 | `CertificateRecord` | `/api/certificates` | draft, valid, expired, revoked |
 | 放行授权 | `ReleaseAuthorization` | `/api/authorizations` | draft, review, approved, restricted, revoked |
@@ -41,6 +42,8 @@ docker compose down -v --remove-orphans
 - JWT 登录和 viewer/operator/reviewer/admin 四级 RBAC，数据库角色、Gin middleware、React 路由守卫和按钮权限一致。
 - 放行必须经过 `draft -> review -> approved/restricted`，提交者与复核者必须是不同账号，operator 无法自批。
 - 证书发布同样要求 reviewer/admin，且发布者不能是当前版本的编制人。
+- 装机必须登记机型、架次、安装位置和装机人，部件从 `released` 进到 `installed`；同一部件的在装记录或同一架次位置被占用都会返回 409 并指明阻挡记录，数据库唯一键兜底防并发重复装机。
+- `installed` 部件不能通过通用迁移进入检查或暂停；卸载必须填写原因，部件回到 `inspection`，装机履历永久保留在部件详情中，装机与卸载同事务写入审计。
 - 证书和授权的每次创建、草稿更新与状态变化都在同一事务写入不可变版本快照和审计日志。
 - 所有状态变化使用乐观锁；复核开始后业务字段锁定，防止覆盖已审证据。
 - 请求 ID、结构化日志、全局错误映射和 Redis 分布式限流。
@@ -131,7 +134,7 @@ docker compose config --quiet
 
 | 枚举 | 值 | 前后端出现位置 |
 |---|---|---|
-| `PartState` | `received, inspection, hold, released, retired` | `backend/internal/constants/status.go`、`frontend/src/types/status.ts` |
+| `PartState` | `received, inspection, hold, released, installed, retired` | `backend/internal/constants/status.go`、`frontend/src/types/status.ts` |
 | `AuthorizationState` | `draft, review, approved, restricted, revoked` | `backend/internal/constants/status.go`、`frontend/src/types/status.ts` |
 
 每个实体自己的完整迁移图同样位于 `backend/internal/constants/status.go`；页面使用的状态列表位于 `frontend/src/types/status.ts`。修改状态时必须同步两处并更新对应服务测试。

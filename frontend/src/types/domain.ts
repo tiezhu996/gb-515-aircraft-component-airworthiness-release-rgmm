@@ -21,8 +21,27 @@ export interface DomainRecord {
 	reviewedBy?: string;
 	reviewReason?: string;
 	revisions?: VersionRevision[];
+	installations?: PartInstallation[];
 	createdAt: string;
 	updatedAt: string;
+}
+
+export interface PartInstallation {
+  id: number;
+  partId: number;
+  partCode: string;
+  aircraftModel: string;
+  aircraftTail: string;
+  position: string;
+  installer: string;
+  installedBy: string;
+  installedAt: string;
+  active: boolean;
+  removedAt: string | null;
+  removedBy: string;
+  removalReason: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface VersionRevision {

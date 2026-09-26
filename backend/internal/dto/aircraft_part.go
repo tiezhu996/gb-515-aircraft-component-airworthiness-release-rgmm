@@ -33,3 +33,20 @@ type UpdateAircraftPart struct {
 	Evidence        string    `json:"evidence" binding:"max=2000"`
 	RelatedCode     string    `json:"relatedCode" binding:"max=64"`
 }
+
+// InstallAircraftPart registers the 装机履历 required to move a released part
+// into installed: 机型、架次、安装位置和装机人 are all mandatory.
+type InstallAircraftPart struct {
+	ExpectedVersion uint   `json:"expectedVersion" binding:"required"`
+	AircraftModel   string `json:"aircraftModel" binding:"required,min=2,max=80"`
+	AircraftTail    string `json:"aircraftTail" binding:"required,min=2,max=80"`
+	Position        string `json:"position" binding:"required,min=2,max=120"`
+	Installer       string `json:"installer" binding:"required,min=2,max=120"`
+}
+
+// UninstallAircraftPart closes the active installation; the reason is kept on
+// the historical record forever.
+type UninstallAircraftPart struct {
+	ExpectedVersion uint   `json:"expectedVersion" binding:"required"`
+	Reason          string `json:"reason" binding:"required,min=3,max=500"`
+}
